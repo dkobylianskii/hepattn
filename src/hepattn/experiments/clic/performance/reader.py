@@ -1,12 +1,11 @@
-# ruff: noqa: FIX004
-
-import gc
-
+from pathlib import Path
+import uproot
 import numpy as np
 import uproot
 from tqdm import tqdm
-
-from .helper_dicts import class_mass_dict, pdgid_class_dict
+import gc
+import awkward as ak
+from .helper_dicts import pdgid_class_dict, class_mass_dict
 
 
 def load_pred_hgpflow(pred_path, threshold=0.5, num_events=None):
@@ -73,6 +72,34 @@ def load_pred_mpflow(pred_path, threshold=0.5, num_events=None):
 
 
 def load_pred_mlpf(pred_path, truth_event_number_offset):
+    yvals = []
+    filenames = []
+
+    # filelist = list(glob.glob(pred_path))
+    filelist = Path(pred_path).glob("*.parquet")
+    # name example: pred_0_78.parquet
+    filelist = sorted(filelist, key=lambda x: int(x.stem.split("_")[2]))
+    pbar = tqdm(filelist, desc="Loading MLPF predictions...")
+    for fi in pbar:
+        pbar.set_postfix({"file": fi.name})
+        dd = ak.from_parquet(fi)
+        yvals.append(dd)
+        filenames.append(fi)
+
+    data = ak.concatenate(yvals, axis=0)
+    print(data['particles']['pred'].fields)
+    # yvals = {}
+    # for typ in ["target", "cand", "pred"]:
+    #     for k in data["particles"][typ].fields:
+    #         yvals["{}_{}".format(typ, k)] = data["particles"][typ][k]
+
+    # for typ in ["target", "cand", "pred"]:
+    #     # Compute phi, px, py, pz
+    #     yvals[typ + "_phi"] = np.arctan2(yvals[typ + "_sin_phi"], yvals[typ + "_cos_phi"])
+    #     yvals[typ + "_px"] = yvals[typ + "_pt"] * yvals[typ + "_cos_phi"]
+    #     yvals[typ + "_py"] = yvals[typ + "_pt"] * yvals[typ + "_sin_phi"]
+    #     yvals[typ + "_pz"] = yvals[typ + "_pt"] * np.sinh(yvals[typ + "_eta"])
+
     class_remap = {
         1.0: 0,  # ch_had
         2.0: 3,  # neut had
@@ -81,16 +108,25 @@ def load_pred_mlpf(pred_path, truth_event_number_offset):
         5.0: 2,  # muon
     }
 
-    tree = uproot.open(pred_path)["parts"]
-    vars_to_load = ["pred_pt", "pred_phi", "pred_eta", "pred_cl", "pred_e"]
+    # tree = uproot.open(pred_path)["parts"]
+    # vars_to_load = ["pred_pt", "pred_phi", "pred_eta", "pred_cl", "pred_e"]
 
-    mlpf_class = tree["pred_cl"].array(library="np")
-    mlpf_mask_cl = np.array([x != 0 for x in mlpf_class], dtype=object)
+    # mlpf_class = tree["pred_cl"].array(library="np")
 
-    mlpf_dict = {}
-    for var in tqdm(vars_to_load, desc="Loading MLPF predictions...", total=len(vars_to_load)):
-        new_var = var.replace("pred_", "")
-        mlpf_dict[new_var] = np.array([x[m] for x, m in zip(tree[var].array(library="np"), mlpf_mask_cl, strict=False)], dtype=object)
+    # mlpf_dict = {}
+    # for var in tqdm(vars_to_load, desc="Loading MLPF predictions...", total=len(vars_to_load)):
+    #     new_var = var.replace("pred_", "")
+    #     mlpf_dict[new_var] = np.array([x[m] for x, m in zip(tree[var].array(library="np"), mlpf_mask_cl)], dtype=object)
+    mlpf_dict = {
+        "pt": data["particles"]["pred"]["pt"],
+        "eta": data["particles"]["pred"]["eta"],
+        "phi": data["particles"]["pred"]["phi"],
+        "cl": data["particles"]["pred"]["cls_id"],
+        "e": data["particles"]["pred"]["energy"],
+    }
+    mlpf_mask_cl = np.array([x != 0 for x in mlpf_dict["cl"]], dtype=object)
+    for key in mlpf_dict:
+        mlpf_dict[key] = np.array([x[m].to_numpy() for x, m in zip(mlpf_dict[key], mlpf_mask_cl)], dtype=object)
 
     # class remapping
     mlpf_dict["class"] = np.array([np.array([class_remap[x] for x in cls]) for cls in mlpf_dict["cl"]], dtype=object)
@@ -102,12 +138,20 @@ def load_pred_mlpf(pred_path, truth_event_number_offset):
         mlpf_dict["charge"][i][cls <= 2] = 1
 
     # compute event number
-    mlpf_dict["event_id"] = tree["event_id"].array(library="np")
+    # mlpf_dict["event_id"] = tree["event_id"].array(library="np")
     # mlpf_dict['file_id'] = tree['file_id'].array(library='np')
     # mlpf_dict['file_id'] = mlpf_dict['file_id'] - mlpf_dict['file_id'].min()
     # mlpf_dict['event_number'] = mlpf_dict['event_id'] + mlpf_dict['file_id'] * num_ev_in_one_file + truth_event_number_offset
 
-    mlpf_dict["event_number"] = mlpf_dict["event_id"] + truth_event_number_offset
+    # mlpf_dict["event_number"] = data["event_idx"].to_numpy()
+    event_number = data["event_idx"].to_numpy()
+    mask = (event_number != 1399) & (event_number != 11288)
+    for key, value in mlpf_dict.items():
+        mlpf_dict[key] = value[mask]
+    event_number = event_number[mask]
+    event_number = event_number - ((event_number > 1399) & (event_number < 11288)) - 2 * (event_number > 11288)
+    mlpf_dict["event_number"] = event_number
+    # mlpf_dict["event_number"] = np.arange(len(mlpf_dict["pt"])) # HACK
 
     # compute mass
     mlpf_dict["mass"] = np.empty_like(mlpf_dict["pt"])

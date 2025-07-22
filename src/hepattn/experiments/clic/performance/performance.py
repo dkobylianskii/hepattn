@@ -33,7 +33,7 @@ class Performance:
         elif isinstance(num_events, int):
             # if num_events is an int, we assume it is the same for all networks
             # and convert it to a dict with the network names as keys
-            num_events = dict.fromkeys(networks.keys(), num_events)
+            num_events = dict.fromkeys(networks, num_events)
 
         self.data = {}
         for net_name, pred_path in networks.items():
