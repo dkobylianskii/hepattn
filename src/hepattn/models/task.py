@@ -18,9 +18,10 @@ class Task(nn.Module, ABC):
     that can be trained as part of a multi-task learning setup.
     """
 
-    def __init__(self, has_intermediate_loss: bool):
+    def __init__(self, has_intermediate_loss: bool, permute_loss: bool = True):
         super().__init__()
         self.has_intermediate_loss = has_intermediate_loss
+        self.permute_loss = permute_loss
 
     @abstractmethod
     def forward(self, x: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -170,7 +171,7 @@ class HitFilterTask(Task):
         has_intermediate_loss : bool, optional
             Whether task has intermediate loss, by default True.
         """
-        super().__init__(has_intermediate_loss=has_intermediate_loss)
+        super().__init__(has_intermediate_loss=has_intermediate_loss, permute_loss=False)
 
         self.name = name
         self.hit_name = hit_name
@@ -438,9 +439,7 @@ class RegressionTask(Task):
             target = targets[self.target_object + "_" + field][targets[self.target_object + "_valid"]]
             # Get the error between the prediction and target for this field
             err = pred - target
-            # Compute the RMSE and log it
             metrics[field + "_rmse"] = torch.sqrt(torch.mean(torch.square(err)))
-            # Compute the relative error / resolution and log it
             metrics[field + "_mean_rel_err"] = torch.mean(err / target)
             metrics[field + "_std_rel_err"] = torch.std(err / target)
 
@@ -540,7 +539,7 @@ class GaussianRegressionTask(Task):
 
         # Only compute NLL for valid tracks or track-hit pairs
         # nll = nll[targets[self.target_object + "_valid"]]
-        log_likelihood = log_likelihood * targets[self.target_object + "_valid"].type_as(log_likelihood)
+        log_likelihood *= targets[self.target_object + "_valid"].type_as(log_likelihood)
         # Take the average and apply the task weight
         return {"nll": -self.loss_weight * log_likelihood.mean()}
 
@@ -632,7 +631,7 @@ class ObjectGaussianRegressionTask(GaussianRegressionTask):
         jac = torch.sum(diagu, dim=-1)  # (B, N, N)
 
         log_likelihood = self.likelihood_norm - 0.5 * zsq + jac
-        log_likelihood = log_likelihood * targets[f"{self.target_object}_valid"].unsqueeze(1).type_as(log_likelihood)
+        log_likelihood *= targets[f"{self.target_object}_valid"].unsqueeze(1).type_as(log_likelihood)
         costs = -log_likelihood
 
         return {"nll": self.cost_weight * costs}
@@ -768,7 +767,7 @@ class ObjectHitRegressionTask(RegressionTask):
         x_obj_hit = torch.einsum("...nie,...mie->...nmi", x_obj, x_hit)  # Shape BNMD
 
         # Shape of padding goes BM -> B1M -> B1M1 -> BNMD
-        x_obj_hit = x_obj_hit * x[self.input_hit + "_valid"].unsqueeze(-2).unsqueeze(-1).expand_as(x_obj_hit).float()
+        x_obj_hit *= x[self.input_hit + "_valid"].unsqueeze(-2).unsqueeze(-1).expand_as(x_obj_hit).float()
         return x_obj_hit
 
 
@@ -814,7 +813,7 @@ class ClassificationTask(Task):
         has_intermediate_loss : bool, optional
             Whether task has intermediate loss, by default True.
         """
-        super().__init__(has_intermediate_loss=has_intermediate_loss)
+        super().__init__(has_intermediate_loss=has_intermediate_loss, permute_loss=permute_loss)
 
         self.name = name
         self.input_object = input_object
@@ -826,7 +825,6 @@ class ClassificationTask(Task):
         self.loss_weight = loss_weight
         self.multilabel = multilabel
         self.class_net = Dense(dim, len(classes))
-        self.permute_loss = permute_loss
 
         if self.class_weights is not None:
             self.class_weights_values = torch.tensor([class_weights[class_name] for class_name in self.classes])
@@ -1195,7 +1193,7 @@ class IncidenceBasedRegressionTask(RegressionTask):
             output = outputs[self.output_object + "_regr"][..., i]
             mask = targets[self.target_object + "_valid"].clone()
             if self.split_charge_neutral_loss and field in self.loss_masks:
-                mask = mask & self.loss_masks[field](output_class, target_class)
+                mask &= self.loss_masks[field](output_class, target_class)
             if loss is None:
                 loss = torch.nn.functional.smooth_l1_loss(output[mask], target[mask], reduction="mean")
             else:
@@ -1214,11 +1212,10 @@ class IncidenceBasedRegressionTask(RegressionTask):
             target = targets[self.target_object + "_" + field][targets[self.target_object + "_valid"]]
             # Get the error between the prediction and target for this field
             err = pred - target
-            # Compute the RMSE and log it
             metrics[field + "_rmse"] = torch.sqrt(torch.mean(torch.square(err)))
-            # Compute the relative error / resolution and log it
-            metrics[field + "_mean_res"] = torch.mean(err / target)
-            metrics[field + "_std_res"] = torch.std(err / target)
+            metrics[field + "_abs_res"] = err.abs().mean()
+            metrics[field + "_mean_norm_res"] = torch.mean(err / target)
+            metrics[field + "_std_norm_res"] = torch.std(err / target)
 
         return metrics
 
@@ -1254,7 +1251,7 @@ class IncidenceBasedRegressionTask(RegressionTask):
         proxy_feats_charged = self.scale_proxy_feats(proxy_feats_charged) * is_charged.unsqueeze(-1)
 
         inc_e_weighted = incidence * proxy_feats[..., 0].unsqueeze(1)
-        inc_e_weighted = inc_e_weighted * (1 - inputs[self.input_hit + "_is_track"].unsqueeze(1))
+        inc_e_weighted *= 1 - inputs[self.input_hit + "_is_track"].unsqueeze(1)
         inc = inc_e_weighted / (inc_e_weighted.sum(dim=-1, keepdim=True) + 1e-6)
 
         proxy_feats_neutral = torch.einsum("bnf,bpn->bpf", proxy_feats, inc)

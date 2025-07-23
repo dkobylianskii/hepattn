@@ -1,19 +1,19 @@
 seed_everything: 42
-name: TRK-v0-lite-aux-only-mask
+name: TRK-v1-queryPE-phionly-hybrid-scalePE-lite
 
 data:
-  train_dir: /share/rcifdata/maxhart/data/trackml/prepped/train/
-  val_dir: /share/rcifdata/maxhart/data/trackml/prepped/val/
-  test_dir: /share/rcifdata/maxhart/data/trackml/prepped/test/
+  train_dir:  /share/rcifdata/pduckett/hepattn-main/data/trackml/prepped/train/
+  val_dir: /share/rcifdata/pduckett/hepattn-main/data/trackml/prepped/val/
+  test_dir: /share/rcifdata/pduckett/hepattn-main/data/trackml/prepped/test/
 
-  hit_eval_train: /share/rcifdata/svanstroud/hepattn/src/hepattn/experiments/trackml/logs/HC-v3-lite_20250620-T114025/ckpts/epoch=016-val_loss=0.15730_train_eval.h5
-  hit_eval_val: /share/rcifdata/svanstroud/hepattn/src/hepattn/experiments/trackml/logs/HC-v3-lite_20250620-T114025/ckpts/epoch=016-val_loss=0.15730_val_eval.h5
-  hit_eval_test: /share/rcifdata/svanstroud/hepattn/src/hepattn/experiments/trackml/logs/HC-v3-lite_20250620-T114025/ckpts/epoch=016-val_loss=0.15730_test_eval.h5
+  hit_eval_train: /share/rcifdata/pduckett/hepattn-main/data/trackml/epoch=016-val_loss=0.15730_train_eval.h5
+  hit_eval_val: /share/rcifdata/pduckett/hepattn-main/data/trackml/epoch=016-val_loss=0.15730_val_eval.h5
+  hit_eval_test: /share/rcifdata/pduckett/hepattn-main/data/trackml/epoch=016-val_loss=0.15730_test_eval.h5
 
   num_workers: 10
   num_train: -1
   num_test: 10
-  num_val: 10
+  num_val: -1
 
   # Select only hits from these detector volumes
   # pix barrel: 8, pix endcap: 7, 9
@@ -67,7 +67,7 @@ trainer:
   accelerator: gpu
   devices: 1
   precision: bf16-mixed
-  log_every_n_steps: 50
+  log_every_n_steps: 10
   default_root_dir: logs
   gradient_clip_val: 0.1
   enable_progress_bar: true
@@ -85,10 +85,10 @@ trainer:
       project_name: trackml_tracking
 
   callbacks:
-    #- class_path: hepattn.callbacks.TargetStats
-    - class_path: hepattn.callbacks.Compile
+    #- class_path: hepattn.callbacks.Compile
     - class_path: hepattn.callbacks.InferenceTimer
     - class_path: hepattn.callbacks.SaveConfig
+    - class_path: hepattn.callbacks.AttnMaskLogger
     - class_path: hepattn.callbacks.Checkpoint
       init_args:
         monitor: val/loss
@@ -102,7 +102,7 @@ trainer:
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor
     - class_path: lightning.pytorch.callbacks.TQDMProgressBar
       init_args:
-        refresh_rate: 50
+        refresh_rate: 1
 
 model:
   optimizer: Lion
@@ -122,8 +122,20 @@ model:
   model:
     class_path: hepattn.models.MaskFormer
     init_args:
-      dim: &dim 256
       input_sort_field: phi
+      num_queries: *num_objects
+      dim: &dim 256
+      log_attn_mask: true
+      query_posenc:
+          class_path: hepattn.models.PositionEncoder
+          init_args:
+            input_name: query
+            fields:
+              - phi
+            dim: *dim
+            alpha: 1000
+            base: 100
+      preserve_posenc: true
       input_nets:
         class_path: torch.nn.ModuleList
         init_args:
@@ -155,15 +167,12 @@ model:
                     input_size: 16
                     output_size: *dim
                 posenc:
-                  class_path: hepattn.models.FourierPositionEncoder
+                  class_path: hepattn.models.PositionEncoder
                   init_args:
                     input_name: hit
                     fields:
-                      - r
-                      - eta
                       - phi
                     dim: *dim
-                    scale: 0.1
 
       encoder:
         class_path: hepattn.models.Encoder
@@ -176,14 +185,12 @@ model:
           hybrid_norm: true
           norm: RMSNorm
 
-      decoder:
-        num_decoder_layers: 4
-        num_queries: *num_objects
+      num_decoder_layers: 4
+      decoder_layer_config:
+        dim: *dim
+        norm: RMSNorm
         mask_attention: true
-        use_query_masks: false
-        decoder_layer_config:
-          dim: *dim
-          norm: RMSNorm
+        hybrid_norm: true
 
       tasks:
         class_path: torch.nn.ModuleList
