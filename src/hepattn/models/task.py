@@ -241,6 +241,7 @@ class ObjectHitMaskTask(Task):
         logit_scale: float = 1.0,
         pred_threshold: float = 0.5,
         has_intermediate_loss: bool = True,
+        old_norm: bool = False,
     ):
         """Task for predicting associations between objects and hits.
 
@@ -297,7 +298,8 @@ class ObjectHitMaskTask(Task):
         self.target_object_hit = target_object + "_" + input_hit
         self.inputs = [input_object + "_embed", input_hit + "_embed"]
         self.outputs = [self.output_object_hit + "_logit"]
-        self.hit_net = Dense(dim, dim)
+        self.old_norm = old_norm
+        self.hit_net = Dense(dim, dim) if not old_norm else nn.Identity()
         self.object_net = Dense(dim, dim)
 
     def forward(self, x: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -321,7 +323,8 @@ class ObjectHitMaskTask(Task):
 
         # If the attn mask is completely padded for a given entry, unpad it - tested and is required (?)
         # TODO: See if the query masking stops this from being necessary
-        attn_mask[torch.where(torch.all(attn_mask, dim=-1))] = False
+        if not self.old_norm:
+            attn_mask[torch.where(torch.all(attn_mask, dim=-1))] = False
 
         return {self.input_hit: attn_mask}
 
@@ -333,12 +336,12 @@ class ObjectHitMaskTask(Task):
         output = outputs[self.output_object_hit + "_logit"].detach().to(torch.float32)
         target = targets[self.target_object_hit + "_" + self.target_field].detach().to(output.dtype)
 
-        hit_pad = targets[self.input_hit + "_valid"]
+        hit_pad = targets[self.input_hit + "_valid"] if not self.old_norm else None
 
         costs = {}
         # sample_weight = target + self.null_weight * (1 - target)
         for cost_fn, cost_weight in self.costs.items():
-            costs[cost_fn] = cost_weight * cost_fns[cost_fn](output, target, input_pad_mask=hit_pad)
+            costs[cost_fn] = cost_weight * cost_fns[cost_fn](output, target, input_pad_mask=hit_pad, old_norm=self.old_norm)
         return costs
 
     def loss(self, outputs: dict[str, Tensor], targets: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -348,11 +351,11 @@ class ObjectHitMaskTask(Task):
         hit_pad = targets[self.input_hit + "_valid"]
         object_pad = targets[self.target_object + "_valid"]
 
-        sample_weight = target + self.null_weight * (1 - target)
+        sample_weight = target + self.null_weight * (1 - target) if not self.old_norm else None
         losses = {}
         for loss_fn, loss_weight in self.losses.items():
             losses[loss_fn] = loss_weight * loss_fns[loss_fn](
-                output, target, object_valid_mask=object_pad, input_pad_mask=hit_pad, sample_weight=sample_weight
+                output, target, object_valid_mask=object_pad, input_pad_mask=hit_pad, sample_weight=sample_weight, old_norm=self.old_norm
             )
         return losses
 

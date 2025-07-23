@@ -60,6 +60,7 @@ class CLI(LightningCLI):
             help="Precision setting for float32 matrix multiplications.",
         )
 
+        parser.link_arguments("name", "trainer.logger.init_args.name")
         parser.link_arguments("name", "trainer.logger.init_args.experiment_name")
         parser.link_arguments("name", "model.name")
         parser.link_arguments("trainer.default_root_dir", "trainer.logger.init_args.save_dir")
@@ -68,6 +69,11 @@ class CLI(LightningCLI):
         sc = self.config[self.subcommand]
 
         if self.subcommand == "fit":
+            if sc["trainer.fast_dev_run"]:
+                sc["trainer.logger.init_args.online"] = False
+                sc["data.num_train"] = int(3 * sc["data.batch_size"])
+                sc["data.num_val"] = int(3 * sc["data.batch_size"])
+
             # Get timestamped output dir for this run
             timestamp = datetime.now().strftime("%Y%m%d-T%H%M%S")  # noqa: DTZ005
             log = "trainer.logger"
@@ -87,6 +93,7 @@ class CLI(LightningCLI):
             sc["trainer.default_root_dir"] = log_dir_timestamp
             if sc[log]:
                 sc[f"{log}.init_args.save_dir"] = log_dir_timestamp
+                sc[f"{log}.init_args.name"] = name
 
         if self.subcommand == "test":
             # Modify callbacks when testing
