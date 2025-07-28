@@ -145,9 +145,10 @@ class CLICDataset(Dataset):
         self.n_nodes = self.n_tracks + self.n_topos
 
         self.aux_data_array = {}
-        for var in self.aux_vars:
+        arrays = tree.arrays(self.aux_variables, library="np", entry_stop=self.num_events)
+        for var in self.aux_variables:
             print(f"Loading aux var {var}")
-            self.aux_data_array[var] = tree[var].array(library="np", entry_stop=self.num_events)[mask]
+            self.aux_data_array[var] = arrays[var][mask]
 
         self.num_events = np.sum(mask)
         print(f"Number of events after filtering: {self.num_events}")
@@ -672,7 +673,7 @@ class CLICDataset(Dataset):
             "particle_pdgid",
         ]
 
-        self.aux_vars = [
+        self.aux_variables = [
             "particle_track_idx",
             "track_particle_idx",
             "topo2particle_topo_idx",

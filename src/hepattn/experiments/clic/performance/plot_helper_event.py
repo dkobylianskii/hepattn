@@ -67,7 +67,7 @@ def compute_jet_residual_dict(matched_jets_dict, dr_cut=0.1, leading_n_jets=999,
 
 
 def plot_jet_residuals(residual_dict, pt_relative=True, stylesheet=None, separate_figures=False, pt_relative2=False):
-    _COLORS, _LABELS, _HISTTYPES, _ALPHAS, _LINE_STYLES, _LABEL_LEN = update_stylesheet(stylesheet)
+    colors, labels, histtypes, alphas, line_styles, label_len = update_stylesheet(stylesheet)
 
     xlabel_dict = {
         "pt": "Jet $p_T^{reco} - p_T^{truth}$ [GeV]",
@@ -83,9 +83,9 @@ def plot_jet_residuals(residual_dict, pt_relative=True, stylesheet=None, separat
 
     jet_vars = ["pt", "dR", "nconst", "e_rel"]  # 'eta', 'phi']
     if pt_relative:
-        vars[0] = "pt_rel"
+        jet_vars[0] = "pt_rel"
     if pt_relative2:
-        vars[0] = "pt_rel2"
+        jet_vars[0] = "pt_rel2"
 
     figs = []
     for v_i, var in enumerate(jet_vars):
@@ -142,7 +142,7 @@ def plot_jet_residuals(residual_dict, pt_relative=True, stylesheet=None, separat
         ax.legend()
         if var == "dR":
             ax.set_ylim(0, ax.get_ylim()[1] * (1 + len(residual_dict) * 0.1))
-        elif var != 'pt_rel2':
+        elif var != "pt_rel2":
             ax.set_ylim(0, ax.get_ylim()[1] * (1 + len(residual_dict) * 0.2))
         if var == "pt_rel2":
             ax.set_yscale("log")

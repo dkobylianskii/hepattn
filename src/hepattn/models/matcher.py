@@ -128,7 +128,8 @@ class Matcher(nn.Module):
     def forward(self, costs, object_valid_mask=None):
         # Cost matrix dimensions are batch, pred, true
         # Solvers need numpy arrays on the cpu
-        costs = costs.detach().to(torch.float32).cpu().numpy()
+        costs = costs.detach().to(torch.float32).cpu()
+        costs = torch.nan_to_num(costs, nan=1e6, posinf=1e6, neginf=1e6).numpy()
 
         # If we are at a check interval, use the current cost batch to see which
         # solver is the fastest, and set that to be the new solver
